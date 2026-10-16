@@ -23,6 +23,10 @@ BAIWANG/Quectel-style 4G USB dongle **entirely from userspace over raw USB**
    attempts are shown before you spend one; codes are never logged
 5. **Low data mode** — mark the dongle's link metered so macOS stops treating a
    capped LTE plan as free Ethernet (see below)
+6. **SMS-only forwarding** — keep the modem's cellular data off while the Mac
+   forwards newly archived SMS through its own network to Bark and/or Telegram.
+   In one configured private Telegram chat, `/send` previews an outgoing SMS
+   and `/confirm` sends it after a second explicit step.
 
 Single Go binary; the UI is embedded. SMS goes over the dongle's AT port via USB
 bulk transfers; data usage is sampled from the macOS interface counters of the
@@ -34,8 +38,10 @@ renamed).
 
 - macOS 11+ (Apple Silicon or Intel)
 - `brew install libusb go`
-- A BAIWANG QDC507 dongle (USB ID `2ca3:4006`) **switched to ECM USB mode** —
-  a one-time step; see **[docs/dongle-setup.md](docs/dongle-setup.md)**.
+- A BAIWANG QDC507 dongle (USB ID `2ca3:4006`). Use **QMI** with `-sms-only`
+  for SMS without modem data; use **ECM** if you also need the modem's data
+  link. See [SMS-only setup](docs/telegram-bark-setup.md) and
+  [ECM setup](docs/dongle-setup.md).
   Other Quectel-compatible sticks may work via `BAIWANG_VID`/`BAIWANG_PID`/
   `BAIWANG_IFACE` env overrides.
 
@@ -45,7 +51,21 @@ renamed).
 go build -o vohive-mac ./cmd/vohive-mac
 ./vohive-mac                # web console on http://127.0.0.1:7676
 ./vohive-mac -addr :7676    # expose on the LAN (no auth — beware)
+./vohive-mac -addr 127.0.0.1:7676 -archive-delete=false -sms-only
+# SMS-only mode: modem data stays off; notifications use the Mac's connection
 ```
+
+## SMS-only forwarding
+
+Open the local web console and save Bark and Telegram settings on their
+separate cards. Either channel can run alone; saving or testing one does not
+replace the other. Test buttons send a fixed notification, **not an SMS**.
+Credentials are stored in a local `0600` file outside Git and are never
+returned by the status API. Only new archived messages are queued for
+forwarding. The Telegram bot accepts commands only from the configured
+private chat: `/send NUMBER MESSAGE` returns a preview, then `/confirm`
+sends it; `/cancel` discards it. See the
+[SMS-only and notification setup guide](docs/telegram-bark-setup.md).
 
 ## AT command console
 
@@ -56,7 +76,7 @@ The binary doubles as an ad-hoc AT terminal over the same raw-USB channel
 ./vohive-mac at 'AT+CSQ' 'AT+COPS?'
 ```
 
-This is also the tool used for the one-time ECM mode switch in the setup doc.
+This is also the tool used for the USB mode switches in the setup guides.
 
 ## Low data mode
 
