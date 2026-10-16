@@ -1,0 +1,5 @@
+/vohive-mac
+/data/
+*.log
+notify.json
+*.notify.json
