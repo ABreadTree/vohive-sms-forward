@@ -35,6 +35,7 @@ type Server struct {
 	metered              *metered.Controller
 	smsOnly              bool
 	notificationSettings NotificationSettings
+	heartbeatSettings    HeartbeatSettings
 	guardMu              sync.RWMutex
 	guardState           modem.DataGuardState
 
@@ -154,6 +155,10 @@ func (s *Server) handleSims(w http.ResponseWriter, r *http.Request) {
 // history for any other SIM — rates, session bytes and the interface belong to
 // the card that is actually online, so they are omitted for the rest.
 func (s *Server) handleTraffic(w http.ResponseWriter, r *http.Request) {
+	if s.smsOnly {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "sms_only"})
+		return
+	}
 	simID, err := s.simParam(r)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)
@@ -221,6 +226,10 @@ func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
 // the firmware's autoconnect flag. Setting it reboots the modem, so the
 // dongle drops off the bus for ~20 s before the new state is observable.
 func (s *Server) handleData(w http.ResponseWriter, r *http.Request) {
+	if s.smsOnly && r.Method != http.MethodGet {
+		writeErr(w, http.StatusForbidden, errors.New("短信专用模式不接受手动移动数据操作"))
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		if s.smsOnly {
@@ -255,10 +264,6 @@ func (s *Server) handleData(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, err)
 			return
 		}
-		if s.smsOnly && req.Enabled {
-			writeErr(w, http.StatusForbidden, errors.New("短信专用模式禁止开启移动数据"))
-			return
-		}
 		if err := s.modem.SetDataEnabled(req.Enabled); err != nil {
 			writeErr(w, http.StatusBadGateway, err)
 			return
@@ -280,6 +285,10 @@ func (s *Server) handleData(w http.ResponseWriter, r *http.Request) {
 // Unlike /api/data this changes nothing on the modem and costs no AT traffic:
 // it is a flag on the macOS interface, applied by metered.Controller.
 func (s *Server) handleMetered(w http.ResponseWriter, r *http.Request) {
+	if s.smsOnly {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "sms_only"})
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		simID, err := s.simParam(r)
@@ -487,6 +496,10 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/status", s.handleStatus)
+	mux.HandleFunc("/api/heartbeat", s.handleHeartbeat)
+	mux.HandleFunc("/api/heartbeat/config", s.handleHeartbeat)
+	mux.HandleFunc("/api/heartbeat/check", s.handleHeartbeat)
+	mux.HandleFunc("/api/heartbeat/send", s.handleHeartbeat)
 	mux.HandleFunc("/api/notifications", s.handleNotifications)
 	mux.HandleFunc("/api/notifications/bark", s.handleNotificationBark)
 	mux.HandleFunc("/api/notifications/telegram", s.handleNotificationTelegram)
@@ -506,6 +519,28 @@ func (s *Server) Handler() http.Handler {
 	if err != nil {
 		log.Fatalf("static fs: %v", err)
 	}
-	mux.Handle("/", http.FileServer(http.FS(sub)))
+	files := http.FileServer(http.FS(sub))
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" && r.URL.Path != "/index.html" {
+			files.ServeHTTP(w, r)
+			return
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			http.Error(w, "GET or HEAD only", http.StatusMethodNotAllowed)
+			return
+		}
+		page, err := staticFS.ReadFile("static/index.html")
+		if err != nil {
+			http.Error(w, "page unavailable", http.StatusInternalServerError)
+			return
+		}
+		body := strings.Replace(string(page), `<body data-sms-only="false">`, `<body data-sms-only="`+strconv.FormatBool(s.smsOnly)+`">`, 1)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		if r.Method != http.MethodHead {
+			fmt.Fprint(w, body)
+		}
+	})
 	return mux
 }

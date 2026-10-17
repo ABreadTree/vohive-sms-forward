@@ -38,6 +38,7 @@ const reconcileInterval = 5 * time.Second
 // State is what the API reports: what the SIM's plan says, what the
 // interface actually carries, and why those two might disagree.
 type State struct {
+	Supported  bool   `json:"supported"`
 	SimID      int64  `json:"sim_id"`
 	Enabled    bool   `json:"enabled"` // the SIM is on a metered plan
 	Applied    bool   `json:"applied"` // the link carries the flags right now
@@ -149,6 +150,10 @@ func (c *Controller) reconcile() {
 }
 
 func (c *Controller) reconcileLocked() {
+	if !netif.MeteredSupported() {
+		c.setErr("unsupported_platform")
+		return
+	}
 	simID := c.sims.CurrentID()
 	want, err := c.store.Metered(simID)
 	if err != nil {
@@ -217,7 +222,7 @@ func (c *Controller) State(simID int64) (State, error) {
 	if err != nil {
 		return State{}, err
 	}
-	st := State{SimID: simID, Enabled: want, Privileged: netif.Privileged(),
+	st := State{Supported: netif.MeteredSupported(), SimID: simID, Enabled: want, Privileged: netif.Privileged(),
 		Error: c.err()}
 	if simID != c.sims.CurrentID() {
 		return st, nil

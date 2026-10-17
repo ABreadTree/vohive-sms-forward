@@ -1,0 +1,21 @@
+name: test
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0-dev pkg-config
+      - run: go test -race ./...
+      - run: go vet ./...
+      - run: go build -tags sqlite_omit_load_extension -o /tmp/vohive-sms-forward ./cmd/vohive-mac
+      - run: sh -n openwrt/vohive-sms-forward/files/vohive-sms-forward.init
+      - run: python3 -m unittest discover -s openwrt -p 'test_*.py' -v

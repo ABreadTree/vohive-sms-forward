@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -95,6 +96,14 @@ func (m *Modem) connectLocked() error {
 		dev.Close()
 		return fmt.Errorf("usb config: %w", err)
 	}
+	// Enable native libusb auto-detach AFTER Config: gousb v1.1.3's
+	// Config otherwise manually detaches every interface, including ECM/QMI.
+	// Native auto-detach here acts only on the AT interface we claim next.
+	if err := enableATDriverDetach(runtime.GOOS, dev.SetAutoDetach); err != nil {
+		cfg.Close()
+		dev.Close()
+		return fmt.Errorf("AT driver detach: %w", err)
+	}
 	intf, err := cfg.Interface(modemATIf, 0)
 	if err != nil {
 		cfg.Close()
@@ -122,6 +131,25 @@ func (m *Modem) connectLocked() error {
 	}
 	m.dev, m.cfg, m.intf, m.in, m.out = dev, cfg, intf, in, out
 	return nil
+}
+
+func enableATDriverDetach(goos string, enable func(bool) error) error {
+	if goos == "linux" {
+		return enable(true)
+	}
+	return nil
+}
+
+// Close releases the AT interface (reattaching its Linux driver) and libusb.
+// Call after users of the modem have stopped; a later command reconnects lazily.
+func (m *Modem) Close() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.disconnectLocked()
+	if m.ctx != nil {
+		m.ctx.Close()
+		m.ctx = nil
+	}
 }
 
 func (m *Modem) disconnectLocked() {

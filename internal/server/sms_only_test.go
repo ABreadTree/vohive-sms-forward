@@ -34,3 +34,40 @@ func TestSMSOnlyPageLocksDataToggle(t *testing.T) {
 		t.Fatalf("page lacks SMS-only data lock, status=%d", w.Code)
 	}
 }
+
+func TestSMSOnlyRejectsNetworkEndpointsWithoutWorkers(t *testing.T) {
+	s := &Server{smsOnly: true}
+	for _, path := range []string{"/api/traffic", "/api/metered"} {
+		for _, method := range []string{"GET", "POST"} {
+			w := httptest.NewRecorder()
+			s.Handler().ServeHTTP(w, httptest.NewRequest(method, path, strings.NewReader(`{"enabled":true}`)))
+			if w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), "sms_only") {
+				t.Errorf("%s %s: %d %s", method, path, w.Code, w.Body.String())
+			}
+		}
+	}
+}
+
+func TestSMSOnlyDisallowsManualDataReboots(t *testing.T) {
+	s := &Server{smsOnly: true}
+	for _, body := range []string{`{"enabled":false}`, `{"enabled":true}`, `broken`} {
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, httptest.NewRequest("POST", "/api/data", strings.NewReader(body)))
+		if w.Code != http.StatusForbidden {
+			t.Errorf("%s: %d", body, w.Code)
+		}
+	}
+}
+
+func TestSMSOnlyPageModeIsServerSupplied(t *testing.T) {
+	for _, path := range []string{"/", "/index.html"} {
+		w := httptest.NewRecorder()
+		(&Server{smsOnly: true}).Handler().ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if w.Code != 200 || !strings.Contains(w.Body.String(), `<body data-sms-only="true">`) {
+			t.Errorf("%s missing SMS-only bootstrap: %d", path, w.Code)
+		}
+		if !strings.Contains(w.Body.String(), `id="smsform"`) || !strings.Contains(w.Body.String(), `id="bark-form"`) {
+			t.Error("SMS/notification forms missing")
+		}
+	}
+}

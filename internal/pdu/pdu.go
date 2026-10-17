@@ -158,11 +158,40 @@ func Decode(pduHex string) (*Record, error) {
 
 	rec := &Record{Sender: sender, Timestamp: timestamp, ConcatRef: -1}
 
+	coding := 0 // 0=GSM7 1=8bit 2=UCS2
+	switch {
+	case dcs&0xC0 == 0x00:
+		coding = int(dcs>>2) & 0x03
+		if coding == 3 {
+			coding = 0
+		}
+	case dcs&0xF0 == 0xE0:
+		coding = 2
+	case dcs&0xF0 == 0xF0:
+		if dcs&0x04 != 0 {
+			coding = 1
+		}
+	}
+
+	// TS 23.040 §9.2.3.16: GSM7 UDL counts septets; UCS2/8-bit
+	// count octets. Never archive (and subsequently delete) a partial SMS.
+	needed := int(udl)
+	if coding == 0 {
+		needed = (needed*7 + 7) / 8
+	}
+	if needed > len(ud) {
+		return nil, fmt.Errorf("truncated user data")
+	}
+	ud = ud[:needed]
+	if hasUDH && len(ud) == 0 {
+		return nil, fmt.Errorf("missing user data header")
+	}
+
 	udhLen := 0
 	if hasUDH && len(ud) > 0 {
 		udhLen = int(ud[0]) + 1
-		if udhLen > len(ud) {
-			udhLen = len(ud)
+		if udhLen > len(ud) || (coding == 0 && (udhLen*8+6)/7 > int(udl)) {
+			return nil, fmt.Errorf("truncated user data header")
 		}
 		for i := 1; i+1 < udhLen; {
 			iei, ielen := ud[i], int(ud[i+1])
@@ -183,24 +212,12 @@ func Decode(pduHex string) (*Record, error) {
 		}
 	}
 
-	coding := 0 // 0=GSM7 1=8bit 2=UCS2
-	switch {
-	case dcs&0xC0 == 0x00:
-		coding = int(dcs>>2) & 0x03
-		if coding == 3 {
-			coding = 0
-		}
-	case dcs&0xF0 == 0xE0:
-		coding = 2
-	case dcs&0xF0 == 0xF0:
-		if dcs&0x04 != 0 {
-			coding = 1
-		}
-	}
-
 	switch coding {
 	case 2:
 		body := ud[udhLen:]
+		if len(body)%2 != 0 {
+			return nil, fmt.Errorf("truncated UCS2 user data")
+		}
 		codes := make([]uint16, 0, len(body)/2)
 		for i := 0; i+1 < len(body); i += 2 {
 			codes = append(codes, uint16(body[i])<<8|uint16(body[i+1]))

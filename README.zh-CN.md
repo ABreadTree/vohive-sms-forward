@@ -4,6 +4,26 @@
 
 [English](README.md) | **简体中文**
 
+## iStoreOS 短信专用版（当前目标）
+
+只用 USB 模组收发短信，不将其作为上网卡：
+
+- 网页收发短信、SQLite 历史归档、SIM 状态与 PIN 管理。
+- Bark／Telegram 新短信推送、失败重试与重启恢复。
+- Telegram 指定私聊 `/send` 预览、`/confirm` 二次确认发送、`/cancel` 取消。
+- 通知与 Telegram 操控走 iStoreOS 原有网络；模组数据保持关闭并定期核验。
+- 不启动流量统计、网络接口检测、低数据模式或链路恢复；网页隐藏对应功能。
+- UCI/procd 服务固定使用 `-sms-only=true`，旧 `sms_only=0` 不再生效。
+
+**[iStoreOS 构建、部署与验收指南](docs/openwrt.md)** 包含 SDK 打包、安装、网页配置与回滚。
+已在 Radxa E20C / iStoreOS 24.10.6 上完成 ARM64/musl IPK 构建、安装、启停和无模组验证。
+已完成 QDC507 真实收发、Bark／TG 手机端送达、TG 预览确认发送与 USB 拔插恢复验收；详见 [验收记录](docs/istoreos-verification.md)。
+
+## macOS 历史完整模式说明
+
+以下保留原 macOS 完整模式文档；其中上网卡和流量功能不属于 iStoreOS 短信专用版。
+在 macOS 运行 `./vohive-mac -sms-only -archive-delete=false` 可使用相同短信专用界面。
+
 一个面向 **macOS** 的极简 SIM 卡管理平台，灵感来自
 [VoHive](https://github.com/iniwex5/vohive)（后者面向 Linux）。它**完全在用户态
 通过原始 USB**（libusb）驱动百旺 / 移远（Quectel）系列的 4G USB 上网卡——不需要内核
@@ -185,3 +205,9 @@ docs/              上网卡安装手册（USB 模式切换、故障排查）
 
 vohive-mac 是独立实现，而不是移植：[VoHive](https://github.com/iniwex5/vohive)
 没有发布任何许可证，因此本项目没有取用它的任何代码。
+
+## 模组自检与心跳上报
+
+新增每分钟只读自检及可配置的 HTTPS 正常心跳，默认上报关闭、周期10分钟。
+仅健康时上报，支持独立密钥签名、重试和网页状态；ECS接收与Bark超时报警另建仓库。
+配置见 [心跳指南](docs/heartbeat-setup.md)，对接见 [协议](docs/heartbeat-protocol.md)。

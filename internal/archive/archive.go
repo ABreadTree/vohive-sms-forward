@@ -35,6 +35,8 @@ type Archiver struct {
 	deleteAfter bool
 	channels    []string
 
+	healthMu sync.RWMutex
+	health   HealthStatus
 	mu       sync.Mutex
 	lastSync time.Time
 	stop     chan struct{}
@@ -91,15 +93,24 @@ func (a *Archiver) SyncIfStale(maxAge time.Duration) error {
 	if maxAge > 0 && time.Since(a.lastSync) < maxAge {
 		return nil
 	}
+	a.healthMu.Lock()
+	a.health.LastAttempt = time.Now()
+	a.healthMu.Unlock()
 	var firstErr error
 	for _, storage := range smsStorages {
 		if err := a.syncStorage(storage); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
+	a.healthMu.Lock()
 	if firstErr == nil {
 		a.lastSync = time.Now()
+		a.health.LastSuccess = a.lastSync
+		a.health.LastErrorCategory = ""
+	} else {
+		a.health.LastErrorCategory = "sync_failed"
 	}
+	a.healthMu.Unlock()
 	return firstErr
 }
 
@@ -120,10 +131,12 @@ func (a *Archiver) syncStorage(storage string) error {
 	simID := a.sims.CurrentID()
 
 	var deletable []int
+	var archiveErr error
 	archive := func(sender, ts, body string, indexes ...int) {
 		fresh, err := a.store.ArchiveInboundWithDeliveries(simID, sender, ts, body, a.channels)
 		if err != nil {
 			log.Printf("archive from %s failed: %v", storage, err)
+			archiveErr = fmt.Errorf("archive from %s: %w", storage, err)
 			return // keep on modem; retry next sync
 		}
 		if fresh {
@@ -179,7 +192,7 @@ func (a *Archiver) syncStorage(storage string) error {
 			return fmt.Errorf("delete from %s: %w", storage, err)
 		}
 	}
-	return nil
+	return archiveErr
 }
 
 // olderThan reports whether an SMS timestamp ("2006-01-02 15:04:05") is older

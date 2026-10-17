@@ -287,17 +287,19 @@ select:focus{border-color:var(--ph-dim)}
 .notify-actions button{margin-left:0}
 #notification-status{font-size:11px;color:var(--dim);margin-bottom:12px}
 footer{margin-top:22px; font-size:10px; color:var(--faint); letter-spacing:.15em; text-align:center}
+body[data-sms-only="true"] .network-only{display:none!important}
+body[data-sms-only="false"] .sms-only{display:none!important}
 ::-webkit-scrollbar{width:8px; height:8px}
 ::-webkit-scrollbar-thumb{background:var(--line)}
 ::-webkit-scrollbar-track{background:transparent}
 </style>
 </head>
-<body>
+<body data-sms-only="false">
 <div class="wrap">
 
 <header>
   <div class="brand">
-    <h1>VOHIVE<b>·MAC</b></h1>
+    <h1>VOHIVE<b>·SMS</b></h1>
     <span class="sub">cellular&nbsp;console</span>
   </div>
   <div class="hstats">
@@ -305,7 +307,7 @@ footer{margin-top:22px; font-size:10px; color:var(--faint); letter-spacing:.15em
       <span class="v"><i class="led" id="led"></i><span id="st-model">—</span></span></div>
     <div class="stat"><span class="k">carrier</span><span class="v" id="st-op">—</span></div>
     <div class="stat"><span class="k">sim</span><span class="v" id="st-sim">—</span></div>
-    <div class="stat"><span class="k">wan ip</span><span class="v" id="st-ip">—</span></div>
+    <div class="stat network-only"><span class="k">wan ip</span><span class="v" id="st-ip">—</span></div>
     <div class="stat"><span class="k">signal</span>
       <span class="v"><span class="sig" id="sig"><i></i><i></i><i></i><i></i><i></i></span>
       <span id="st-rssi" style="font-size:10px;color:var(--dim)"></span></span></div>
@@ -315,7 +317,7 @@ footer{margin-top:22px; font-size:10px; color:var(--faint); letter-spacing:.15em
 
 <div class="simbar">
   <span class="k">card</span>
-  <select id="simsel" title="messages and data usage are recorded per SIM"></select>
+  <select id="simsel" title="messages are recorded per SIM"></select>
   <button class="ghost" type="button" id="renamesim">rename</button>
   <button class="ghost" type="button" id="lockbtn" hidden
           title="SIM PIN: the code the card itself demands at power-on">pin lock: —</button>
@@ -374,7 +376,12 @@ footer{margin-top:22px; font-size:10px; color:var(--faint); letter-spacing:.15em
 </section>
 
 <main>
-  <section class="panel"><span class="tick"></span>
+  <section class="panel sms-only"><span class="tick"></span>
+    <h2>短信专用服务</h2>
+    <p>短信通过 USB 模组收发，Bark／Telegram 转发使用 iStoreOS／主机原有网络。</p>
+    <p id="sms-guard-status" role="status">移动数据关闭状态：正在核验</p>
+  </section>
+  <section class="panel network-only"><span class="tick"></span>
     <div class="inboxhead" style="margin:0 0 16px">
       <h2 style="margin:0;flex:1">Data Usage</h2>
       <button class="ghost" type="button" id="meteredbtn" hidden>low data: —</button>
@@ -455,12 +462,37 @@ footer{margin-top:22px; font-size:10px; color:var(--faint); letter-spacing:.15em
   </div>
 </section>
 
-<footer>VOHIVE·MAC // BAIWANG QDC507 OVER RAW USB // NO KEXT, NO DRIVER</footer>
+<section class="panel" id="heartbeat-settings">
+  <h2>模组自检与心跳</h2>
+  <div id="hb-status" class="notify-state" role="status">等待自检</div>
+  <p id="hb-checks" class="hint"></p>
+  <p id="hb-times" class="hint"></p>
+  <form id="hb-form" autocomplete="off">
+    <div class="secrow">
+      <div><label for="hb-enabled">启用向 ECS 上报</label><input id="hb-enabled" type="checkbox" style="width:auto"></div>
+      <div><label for="hb-device">设备 ID（字母、数字、下划线、连字符）</label><input id="hb-device" maxlength="64" spellcheck="false"></div>
+      <div><label for="hb-name">设备名称</label><input id="hb-name" maxlength="80"></div>
+    </div>
+    <div><label for="hb-endpoint">HTTPS 接收地址</label><input id="hb-endpoint" type="url" placeholder="https://ecs.example/v1/heartbeat" spellcheck="false"></div>
+    <div class="secrow">
+      <div><label for="hb-secret">共享密钥（64 位十六进制；留空保留已存密钥）</label><input id="hb-secret" type="password" autocomplete="new-password" spellcheck="false" maxlength="64"></div>
+      <div><label for="hb-interval">上报周期（秒，默认 600）</label><input id="hb-interval" type="number" min="60" max="86400" value="600"></div>
+    </div>
+    <p class="hint">自检每分钟进行，全部正常才报心跳，不发送测试短信。ECS 需独立部署；设备 ID、密钥和周期必须与 ECS 一致。默认关闭上报。</p>
+    <div class="notify-actions"><button id="hb-save" type="submit">保存设置</button>
+      <button id="hb-check" class="ghost" type="button">立即自检</button>
+      <button id="hb-send" class="ghost" type="button">自检并上报</button></div>
+    <div id="hb-note" class="note" role="alert"></div>
+  </form>
+</section>
+
+<footer>VOHIVE·SMS // USB SMS · BARK · TELEGRAM</footer>
 </div>
 
 <script>
 "use strict";
 const $=id=>document.getElementById(id);
+const SMS_ONLY=document.body.dataset.smsOnly==="true";
 
 function fmtBytes(n){
   if(n==null) return "—";
@@ -543,6 +575,12 @@ async function pollStatus(){
 let dataEnabled=null, dataBusy=false, dataSMSOnly=false, dataModeKnown=false, dataGuardState="pending";
 function renderData(){
   const b=$("databtn");
+  if(SMS_ONLY){
+    b.hidden=true;
+    const label={off:"已核验关闭",pending:"等待模组／正在核验",error:"核验失败，请检查模组支持情况"};
+    $("sms-guard-status").textContent="移动数据关闭状态："+(label[dataGuardState]||label.pending);
+    return;
+  }
   if(!dataModeKnown){b.hidden=true; return}
   if(dataSMSOnly){
     b.hidden=false;
@@ -602,6 +640,7 @@ $("databtn").addEventListener("click",async()=>{
    be running as root. */
 let metered=null;
 async function loadMetered(){
+  if(SMS_ONLY) return;
   try{
     const q=viewSim===null?"":"?sim="+viewSim;
     const r=await fetch("/api/metered"+q);
@@ -611,7 +650,7 @@ async function loadMetered(){
 }
 function renderMetered(){
   const b=$("meteredbtn");
-  if(!metered){ b.hidden=true; return }
+  if(!metered || metered.supported===false){ b.hidden=true; return }
   b.hidden=false;
   const on=metered.enabled;
   // "pending" means the card is on a metered plan but the link is not marked:
@@ -823,9 +862,10 @@ $("chpinform").addEventListener("submit",async ev=>{
 });
 
 /* ---------------- traffic ---------------- */
-const cv=$("chart"), ctx=cv.getContext("2d");
+const cv=$("chart"), ctx=SMS_ONLY?null:cv.getContext("2d");
 let lastHist=null; // kept so a theme switch can repaint without waiting for a poll
 function drawChart(hist){
+  if(SMS_ONLY) return;
   lastHist=hist;
   const css=getComputedStyle(document.documentElement), v=n=>css.getPropertyValue(n).trim();
   const ph=v("--ph-rgb");
@@ -866,6 +906,7 @@ function drawDays(days){
   }).join("");
 }
 async function pollTraffic(){
+  if(SMS_ONLY) return;
   try{
     const q=viewSim===null?"":"?sim="+viewSim;
     const t=await (await fetch("/api/traffic"+q)).json();
@@ -969,6 +1010,47 @@ $("movego").addEventListener("click",async()=>{
     await loadSims(); await loadInbox();
   }catch(e){ alert("move failed: "+e.message); }
 });
+
+/* ---------------- heartbeat ---------------- */
+let heartbeatLoaded=false,heartbeatBusy=false,heartbeatRevision=0;
+const heartbeatLabels={at:"AT 通信",sim:"SIM 就绪",registration:"蜂窝注册",data_off:"数据关闭",archive:"短信归档",database:"数据库",timely:"检查时限"};
+function renderHeartbeat(s){
+  const r=s.report||{},c=s.config||{};
+  $("hb-status").textContent=(r.healthy?"自检正常":"自检待就绪／异常")+" · "+(c.enabled?"上报已启用":"上报未启用")+(s.error?" · "+s.error:"")+(s.config_error?" · "+s.config_error:"");
+  $("hb-checks").textContent=Object.entries(heartbeatLabels).map(([k,v])=>v+"："+((r.checks||{})[k]?"正常":"待核验／异常")).join(" · ");
+  const stamp=v=>v&&!v.startsWith("0001-")?new Date(v).toLocaleString():"尚无";
+  $("hb-times").textContent="最近自检："+stamp(r.checked_at)+" · 最近上报尝试："+stamp(s.last_attempt)+" · 最近成功："+stamp(s.last_success);
+  if(!heartbeatLoaded){
+    $("hb-enabled").checked=!!c.enabled;
+    $("hb-device").value=c.device_id||"";$("hb-name").value=c.name||"";$("hb-endpoint").value=c.endpoint||"";$("hb-interval").value=c.interval_seconds||600;
+    heartbeatLoaded=true;
+  }
+  $("hb-secret").placeholder=s.secret_configured?"已配置；留空保留":"尚未配置";
+}
+async function loadHeartbeatSettings(){
+  const revision=heartbeatRevision;
+  try{const r=await fetch("/api/heartbeat",{cache:"no-store"});if(!r.ok)return;const s=await r.json();if(!heartbeatBusy&&revision===heartbeatRevision)renderHeartbeat(s)}catch(e){}
+}
+function heartbeatButtons(busy){for(const id of ["hb-save","hb-check","hb-send"])$(id).disabled=busy}
+async function heartbeatSave(event){
+  event.preventDefault();if(heartbeatBusy)return;heartbeatBusy=true;heartbeatRevision++;heartbeatButtons(true);
+  const c={enabled:$("hb-enabled").checked,device_id:$("hb-device").value.trim(),name:$("hb-name").value.trim(),endpoint:$("hb-endpoint").value.trim(),secret:$("hb-secret").value.trim(),interval_seconds:Number($("hb-interval").value)};
+  $("hb-secret").value="";
+  try{const r=await fetch("/api/heartbeat/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(c)});if(!r.ok)throw Error();const s=await r.json();heartbeatLoaded=false;renderHeartbeat(s);$("hb-note").textContent="设置已保存。仅自检正常时上报。"}
+  catch(e){$("hb-note").textContent="保存失败，请检查配置、HTTPS 地址与 64 位十六进制密钥。"}
+  finally{heartbeatBusy=false;heartbeatButtons(false)}
+}
+async function heartbeatAction(action){
+  if(heartbeatBusy)return;heartbeatBusy=true;heartbeatRevision++;heartbeatButtons(true);$("hb-note").textContent="执行中…";
+  try{const r=await fetch("/api/heartbeat/"+action,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});if(!r.ok)throw Error();renderHeartbeat(await r.json());$("hb-note").textContent=action==="send"?"正常心跳已被接收端确认。":"自检已完成，请查看检查结果。"}
+  catch(e){$("hb-note").textContent="操作失败：请检查自检结果、启用状态及接收端配置。"}
+  finally{heartbeatBusy=false;heartbeatButtons(false);loadHeartbeatSettings()}
+}
+$("hb-form").addEventListener("submit",heartbeatSave);
+$("hb-form").addEventListener("input",()=>{heartbeatLoaded=true;heartbeatRevision++});
+$("hb-check").addEventListener("click",()=>heartbeatAction("check"));
+$("hb-send").addEventListener("click",()=>heartbeatAction("send"));
+loadHeartbeatSettings();setInterval(loadHeartbeatSettings,15000);
 
 /* ---------------- notification settings ---------------- */
 let notificationState={bark:{configured:false,active:false},telegram:{configured:false,active:false}};
@@ -1087,12 +1169,14 @@ pollStatus();
 pollDataGuard();
 loadLock();
 loadNotificationSettings();
-setInterval(pollTraffic,3000);
+if(!SMS_ONLY){
+  setInterval(pollTraffic,3000);
+  setInterval(loadMetered,15000);
+}
 setInterval(pollStatus,12000);
 setInterval(pollDataGuard,12000);
 setInterval(loadInbox,60000);
 setInterval(loadSims,30000);
-setInterval(loadMetered,15000);
 setInterval(loadLock,60000); // pollStatus() re-reads it sooner on any +CPIN change
 </script>
 </body>

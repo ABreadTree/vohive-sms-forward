@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/ABreadTree/vohive-sms-forward/internal/app"
 	"github.com/ABreadTree/vohive-sms-forward/internal/archive"
+	"github.com/ABreadTree/vohive-sms-forward/internal/heartbeat"
 	"github.com/ABreadTree/vohive-sms-forward/internal/metered"
 	"github.com/ABreadTree/vohive-sms-forward/internal/modem"
 	"github.com/ABreadTree/vohive-sms-forward/internal/netif"
@@ -39,6 +41,7 @@ func runATCLI(cmds []string) {
 		os.Exit(2)
 	}
 	m := modem.New()
+	defer m.Close()
 	for _, c := range cmds {
 		resp, err := m.Cmd(c, 15*time.Second)
 		fmt.Printf(">>> %s\n%s\n", c, strings.TrimSpace(resp))
@@ -66,7 +69,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	if err := os.MkdirAll(*dataDir, 0o755); err != nil {
+	if err := os.MkdirAll(*dataDir, 0o700); err != nil {
 		log.Fatalf("data dir: %v", err)
 	}
 
@@ -97,12 +100,11 @@ func main() {
 	registry.Refresh()
 	registry.Start()
 	traffic := netif.NewTracker(st, registry)
-	traffic.Start()
 	meter := metered.New(traffic, st, registry)
-	meter.Start()
+	stopNetwork := startNetworkServices(*smsOnly, traffic, meter)
 	archiver := archive.New(m, st, registry, *archiveDelete, nil)
 	var watchdog *recovery.Watchdog
-	if !*smsOnly {
+	if watchdogEnabled(runtime.GOOS, *smsOnly) {
 		watchdog = recovery.New(m, traffic)
 		watchdog.Start()
 	}
@@ -154,6 +156,12 @@ func main() {
 	if err := startNotificationAndArchive(manager, archiver); err != nil {
 		log.Printf("notification configuration unavailable; use local web settings to repair")
 	}
+	checker := heartbeat.Checker{Modem: m.Health, Archive: archiver.Health, Database: st.Health,
+		Guard: func() bool { return *smsOnly && web.DataGuardState() == modem.DataGuardOff }}
+	heartbeats := heartbeat.NewManager(filepath.Join(*dataDir, "heartbeat.json"), checker, heartbeat.Client{})
+	web.SetHeartbeatSettings(heartbeats)
+	heartbeats.Start(context.Background())
+
 	srv := &http.Server{Addr: *addr, Handler: web.Handler()}
 
 	go func() {
@@ -170,17 +178,46 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	srv.Shutdown(ctx) //nolint:errcheck
+	heartbeats.Stop()
 	manager.Stop()
 	stopGuard()
 	<-guardDone
 	if watchdog != nil {
 		watchdog.Stop()
 	}
-	meter.Stop()
+	stopNetwork()
 	archiver.Stop()
 	registry.Stop()
-	traffic.Stop()
+	m.Close()
 	st.Close() //nolint:errcheck
+}
+
+type backgroundService interface {
+	Start()
+	Stop()
+}
+
+// SMS-only does not even start the network samplers/reconcilers. In
+// particular, do not Stop a tracker which was never started: Stop persists
+// usage and belongs exclusively to the legacy network lifecycle.
+func startNetworkServices(smsOnly bool, services ...backgroundService) func() {
+	if smsOnly {
+		return func() {}
+	}
+	for _, service := range services {
+		service.Start()
+	}
+	return func() {
+		for i := len(services) - 1; i >= 0; i-- {
+			services[i].Stop()
+		}
+	}
+}
+
+// OpenWrt's netifd owns link/DHCP recovery. The macOS-specific watchdog
+// must not reboot a router's modem because it observes an unmanaged link.
+func watchdogEnabled(goos string, smsOnly bool) bool {
+	return goos == "darwin" && !smsOnly
 }
 
 func notificationConfigPath(dataDir, override string) string {

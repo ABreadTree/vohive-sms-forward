@@ -1,18 +1,14 @@
 // Cellular data usage tracking.
 //
-// The dongle in ECM mode is a plain network interface to macOS, so usage is
-// measured from the interface byte counters (netstat -ibn) of the Baiwang
-// ECM interface, sampled every few seconds. Daily totals are write-through
+// Usage is measured from the dongle's network interface byte counters
+// (netstat -ibn on macOS, sysfs on Linux), sampled every few seconds.
+// Daily totals are write-through
 // persisted to the SQLite store; counter resets (replug, reboot) are handled
 // by treating a lower reading as a fresh baseline.
 package netif
 
 import (
 	"log"
-	"os/exec"
-	"regexp"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -67,7 +63,7 @@ type Tracker struct {
 	today     store.DayUsage
 	iface     string
 	up        bool
-	link      LinkState // last ifconfig parse: link + low-data flags
+	link      LinkState // last platform snapshot: link + low-data flags
 	lastRx    uint64
 	lastTx    uint64
 	haveLast  bool
@@ -84,45 +80,6 @@ func NewTracker(st *store.Store, sims CurrentSIM) *Tracker {
 	// today's totals are loaded on the first sample, once the SIM is known
 	return &Tracker{store: st, sims: sims, simID: store.UnknownSIM,
 		stop: make(chan struct{})}
-}
-
-var bsdNameRe = regexp.MustCompile(`"BSD Name"\s*=\s*"(en\d+)"`)
-
-// resolveIface finds the BSD interface name of the dongle's ECM function.
-func resolveIface() string {
-	out, err := exec.Command("ioreg", "-r", "-n", "Baiwang", "-l").Output()
-	if err != nil {
-		return ""
-	}
-	if m := bsdNameRe.FindSubmatch(out); m != nil {
-		return string(m[1])
-	}
-	return ""
-}
-
-// readCounters parses `netstat -ibn` for the interface's Link-level row.
-// Columns: Name Mtu Network Address Ipkts Ierrs Ibytes Opkts Oerrs Obytes Coll
-func readCounters(iface string) (rx, tx uint64, ok bool) {
-	out, err := exec.Command("netstat", "-ibn").Output()
-	if err != nil {
-		return 0, 0, false
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		f := strings.Fields(line)
-		if len(f) < 10 || f[0] != iface || !strings.HasPrefix(f[2], "<Link#") {
-			continue
-		}
-		// Some rows omit the Address column; Ibytes/Obytes stay at fixed
-		// offsets from the end: ... Ibytes Opkts Oerrs Obytes Coll
-		n := len(f)
-		rxv, err1 := strconv.ParseUint(f[n-5], 10, 64)
-		txv, err2 := strconv.ParseUint(f[n-2], 10, 64)
-		if err1 != nil || err2 != nil {
-			return 0, 0, false
-		}
-		return rxv, txv, true
-	}
-	return 0, 0, false
 }
 
 func (t *Tracker) Start() {

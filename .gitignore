@@ -3,3 +3,9 @@
 *.log
 notify.json
 *.notify.json
+/dist/
+__pycache__/
+
+# Private heartbeat credentials
+heartbeat.json
+*.heartbeat.json

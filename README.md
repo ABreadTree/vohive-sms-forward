@@ -1,5 +1,19 @@
 # vohive-sms-forward
 
+**Current target: iStoreOS SMS-only gateway.** Send/receive and archive SMS,
+forward incoming messages through Bark and Telegram, and send SMS from a private
+Telegram chat with preview/confirmation. Notifications use the router's existing
+internet connection; the modem is not used as a WAN adapter. The service always
+runs with `-sms-only=true`: no traffic sampler, network-interface discovery,
+metered reconciler, or link watchdog is started, and their UI is hidden.
+See the [build and deployment guide](docs/openwrt.md) (Chinese). Target-SDK
+packaging via the SDK recipe is untested. A native ARM64/musl IPK has been built,
+installed, and tested on Radxa E20C / iStoreOS 24.10.6, including real QDC507 SMS,
+Bark/Telegram delivery confirmed on the phone, Telegram preview/confirmation, and USB replug recovery. See the [verification record](docs/istoreos-verification.md).
+
+The remaining sections describe the retained legacy macOS full mode, not the
+iStoreOS SMS-only service. On macOS, use `./vohive-mac -sms-only` for SMS-only mode.
+
 This independent repository is based on [YanBC/vohive-mac](https://github.com/YanBC/vohive-mac). Thanks to YanBC for the original macOS raw-USB modem implementation. The original MIT license and copyright notice are retained.
 
 **English** | [简体中文](README.zh-CN.md)
@@ -187,3 +201,7 @@ provided.
 
 vohive-mac is an independent implementation, not a port: [VoHive](https://github.com/iniwex5/vohive)
 publishes no license, so no code was taken from it.
+
+## Modem health checks and heartbeats
+
+Read-only self-checks run every minute. Optional signed HTTPS healthy heartbeats default to a 10-minute interval and are disabled until configured. The ECS receiver/timeout alerts belong to a separate repository. See the [setup](docs/heartbeat-setup.md) and [wire protocol](docs/heartbeat-protocol.md) (Chinese).

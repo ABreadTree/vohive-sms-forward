@@ -1,0 +1,47 @@
+#!/bin/sh /etc/rc.common
+
+START=95
+STOP=10
+USE_PROCD=1
+
+start_service() {
+	local enabled data_dir archive_delete vid pid at_interface
+	config_load vohive-sms-forward
+	config_get_bool enabled main enabled 0
+	[ "$enabled" = 1 ] || return 0
+	config_get data_dir main data_dir /etc/vohive-sms-forward/data
+	config_get_bool archive_delete main archive_delete 0
+	config_get vid main vid 2ca3
+	config_get pid main pid 4006
+	config_get at_interface main at_interface 3
+
+	# Invalid IDs must fail here, not silently fall back to a different modem.
+	case "$vid" in ''|*[!0-9a-fA-F]*) echo 'invalid USB VID' >&2; return 1;; esac
+	case "$pid" in ''|*[!0-9a-fA-F]*) echo 'invalid USB PID' >&2; return 1;; esac
+	[ "${#vid}" -le 4 ] && [ "${#pid}" -le 4 ] || return 1
+	case "$at_interface" in ''|*[!0-9]*) echo 'invalid AT interface' >&2; return 1;; esac
+	[ "${#at_interface}" -le 3 ] && [ "$at_interface" -le 255 ] || return 1
+	case "$data_dir" in /*) ;; *) echo 'data_dir must be absolute' >&2; return 1;; esac
+
+	# A dedicated persistent directory is required. Never put this under /tmp:
+	# archived messages and pending notification deliveries must survive reboot.
+	(umask 077; mkdir -p "$data_dir") || return 1
+	local delete_arg=false
+	[ "$archive_delete" = 1 ] && delete_arg=true
+	procd_open_instance
+	procd_set_param command /usr/bin/vohive-sms-forward \
+		-addr 127.0.0.1:7676 -data "$data_dir" \
+		-notify-config "$data_dir/notify.json" \
+		"-archive-delete=$delete_arg" -sms-only=true
+	procd_set_param env "BAIWANG_VID=$vid" "BAIWANG_PID=$pid" \
+		"BAIWANG_IFACE=$at_interface"
+	procd_set_param respawn 3600 5 5
+	procd_set_param term_timeout 60
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_close_instance
+}
+
+service_triggers() {
+	procd_add_reload_trigger vohive-sms-forward
+}

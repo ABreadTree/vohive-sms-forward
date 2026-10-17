@@ -1,4 +1,8 @@
-# 短信专用 QMI 模式与 Bark／Telegram 配置
+# 短信专用模式与 Bark／Telegram 配置
+
+iStoreOS 使用固定短信专用服务，先按 [iStoreOS 部署指南](openwrt.md) 安装，
+通过 SSH 隧道访问网页后，从本文第 2 节配置 Bark／Telegram。本文第 1 节的
+USB 模式切换是原 macOS 专用说明，iStoreOS 不要求切换 QMI 或创建模组网络接口。
 
 本方案不需要虚拟机。模组仅保持蜂窝注册和短信能力，蜂窝数据保持关闭；
 Bark 与 Telegram 的 HTTPS 连接由 Mac 自己的 Wi‑Fi／有线网络发起。

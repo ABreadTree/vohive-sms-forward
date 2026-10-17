@@ -4,23 +4,16 @@
 //
 // It is deliberately below the SIM and the modem. The metered reconciler and
 // the ECM watchdog both need to know what the interface is doing, and both
-// read it through one shared parse here rather than spawning an ifconfig of
-// their own every few seconds.
+// read it through one shared platform backend rather than collecting their
+// own interface snapshots every few seconds.
 package netif
 
 import (
-	"bytes"
-	"fmt"
-	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 )
 
-// absolute path: this one is executed as root, so it is not left to $PATH
-const ifconfigPath = "/sbin/ifconfig"
-
-// LinkState is one parse of `ifconfig <iface>`.
+// LinkState is one platform snapshot (ifconfig on macOS, sysfs on Linux).
 type LinkState struct {
 	Exists      bool // the interface is there at all
 	Up          bool // and its link is actually up ("status: active")
@@ -40,25 +33,6 @@ var (
 	expensiveRe   = regexp.MustCompile(`[<,]EXPENSIVE[,>]`)
 	constrainedRe = regexp.MustCompile(`[<,]CONSTRAINED[,>]`)
 )
-
-// readLink reads the interface's link state and low-data flags in one pass.
-// The ECM function asserts link state itself; after sleep/wake it can stay
-// down (ifconfig "status: inactive") even though the interface still exists
-// and netstat still lists it, so counter readability must not be used as "up".
-//
-// -v is required, not cosmetic: the eflags/xflags lists the low-data flags
-// live in are printed only in verbose mode, and without it a marked link reads
-// back as unmarked forever. Verbose mode can also exit non-zero while printing
-// a perfectly good interface (it reads a supplemental sysctl that is not
-// always permitted), so the output decides whether the read worked — a missing
-// interface is the case that prints nothing at all.
-func readLink(iface string) LinkState {
-	out, _ := exec.Command("ifconfig", "-v", iface).Output()
-	if len(bytes.TrimSpace(out)) == 0 {
-		return LinkState{} // no such interface (unplugged, or renamed)
-	}
-	return parseLink(string(out))
-}
 
 func parseLink(out string) LinkState {
 	return LinkState{
@@ -93,22 +67,3 @@ func hasRoutableV4(out string) bool {
 	}
 	return false
 }
-
-// SetMetered sets or clears both low-data flags on the interface. Root only.
-func SetMetered(iface string, on bool) error {
-	args := []string{iface, "expensive", "constrained"}
-	if !on {
-		args = []string{iface, "-expensive", "-constrained"}
-	}
-	out, err := exec.Command(ifconfigPath, args...).CombinedOutput()
-	if err != nil {
-		if msg := strings.TrimSpace(string(out)); msg != "" {
-			return fmt.Errorf("%s: %s", ifconfigPath, msg)
-		}
-		return fmt.Errorf("%s: %w", ifconfigPath, err)
-	}
-	return nil
-}
-
-// Privileged reports whether this process can set the flags at all.
-func Privileged() bool { return os.Geteuid() == 0 }
